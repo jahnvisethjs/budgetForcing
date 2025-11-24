@@ -152,11 +152,13 @@ class ChatBudgetForcingAgent(Agent):
                 ]
                 
                 # Continue generation
+                # CRITICAL: Add stop sequence to prevent model from generating "Wait" itself
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages_with_wait,
                     temperature=self.temperature,
                     max_tokens=remaining_budget,
+                    stop=["Wait,", "Wait"],  # Stop if model tries to generate Wait
                 )
                 
                 # Append new content
