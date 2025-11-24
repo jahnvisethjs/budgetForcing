@@ -112,6 +112,20 @@ class ChatBudgetForcingAgent(Agent):
         tokens_used = response.usage.completion_tokens
         finish_reason = response.choices[0].finish_reason
         
+        # Track first action for comparison
+        try:
+            first_action_str = content.split("Action:")[-1].strip()
+            first_action_parsed = json.loads(first_action_str)
+            first_action_name = first_action_parsed.get("name", "unknown")
+        except:
+            first_action_name = "unknown"
+        
+        print(f"\n{'='*60}")
+        print(f"[BUDGET FORCING] Phase 1 Complete")
+        print(f"  Tokens used: {tokens_used}/{actual_max_tokens}")
+        print(f"  First action: {first_action_name}")
+        print(f"{'='*60}")
+        
         # PHASE 2: Budget forcing (S1 style)
         # S1 approach: Always force continuation num_ignore times
         # This gives model more thinking time before finalizing action
@@ -120,9 +134,16 @@ class ChatBudgetForcingAgent(Agent):
         # Always force budget forcing if we have budget remaining
         # S1 doesn't try to detect "should we force" - it just forces num_ignore times
         if remaining_budget > 10:
+            print(f"\n[BUDGET FORCING] Phase 2: Forcing reconsideration")
+            print(f"  Remaining budget: {remaining_budget} tokens")
+            print(f"  num_ignore iterations: {self.num_ignore}")
+            
             for i in range(self.num_ignore):
                 if remaining_budget <= 10:
                     break
+                
+                print(f"\n  --- Forcing iteration {i+1}/{self.num_ignore} ---")
+                print(f"  Appending 'Wait,\\n' to prompt...")
                 
                 # S1 approach: append "Wait" to the assistant's message
                 # This forces model to reconsider its reasoning
@@ -142,14 +163,42 @@ class ChatBudgetForcingAgent(Agent):
                 new_content = response.choices[0].message.content
                 content = content + "Wait,\n" + new_content
                 
+                print(f"  New content generated: {len(new_content)} chars")
+                print(f"  Total content now: {len(content)} chars")
+                
                 # Update budget tracking
                 tokens_used += response.usage.completion_tokens
                 remaining_budget = actual_max_tokens - tokens_used
+                print(f"  Tokens used this iteration: {response.usage.completion_tokens}")
+                print(f"  Total tokens: {tokens_used}/{actual_max_tokens}")
+                print(f"  Remaining: {remaining_budget}")
                 finish_reason = response.choices[0].finish_reason
                 
                 # Stop if no more budget
                 if remaining_budget <= 10:
                     break
+        
+        # Track final action for comparison
+        try:
+            final_action_str = content.split("Action:")[-1].strip()
+            final_action_parsed = json.loads(final_action_str)
+            final_action_name = final_action_parsed.get("name", "unknown")
+        except:
+            final_action_name = "unknown"
+        
+        # Compare and log result
+        if remaining_budget > 10 and self.num_ignore > 0:
+            print(f"\n[BUDGET FORCING] Phase 2 Complete")
+            if first_action_name != final_action_name:
+                print(f"  ✅ ACTION CHANGED: {first_action_name} → {final_action_name}")
+                print(f"  🎯 Model reconsidered and changed its mind!")
+            else:
+                print(f"  ⚠️  Same action: {first_action_name}")
+                print(f"  Model stuck with original decision")
+        else:
+            print(f"\n[BUDGET FORCING] Phase 2 Skipped (insufficient budget)")
+        
+        print(f"{'='*60}\n")
         
         # PHASE 3: Parse action
         # Extract action from content (same logic as ChatReActAgent)
