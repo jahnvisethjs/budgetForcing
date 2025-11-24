@@ -40,7 +40,7 @@ def parse_args() -> RunConfig:
         "--agent-strategy",
         type=str,
         default="tool-calling",
-        choices=["tool-calling", "act", "react", "few-shot"],
+        choices=["tool-calling", "act", "react", "few-shot", "budget-forcing"],
     )
     parser.add_argument(
         "--temperature",
@@ -69,6 +69,11 @@ def parse_args() -> RunConfig:
     parser.add_argument("--shuffle", type=int, default=0)
     parser.add_argument("--user-strategy", type=str, default="llm", choices=[item.value for item in UserStrategy])
     parser.add_argument("--few-shot-displays-path", type=str, help="Path to a jsonlines file containing few shot displays")
+    
+    # Budget forcing parameters
+    parser.add_argument("--vllm-base-url", type=str, default="http://localhost:8005/v1", help="vLLM server URL for budget forcing agent")
+    parser.add_argument("--max-tokens-thinking", type=int, default=8000, help="Maximum tokens for thinking phase in budget forcing")
+    parser.add_argument("--num-ignore", type=int, default=1, help="Number of times to append 'Wait' in budget forcing")
     args = parser.parse_args()
     print(args)
     return RunConfig(
@@ -90,6 +95,9 @@ def parse_args() -> RunConfig:
         shuffle=args.shuffle,
         user_strategy=args.user_strategy,
         few_shot_displays_path=args.few_shot_displays_path,
+        vllm_base_url=args.vllm_base_url,
+        max_tokens_thinking=args.max_tokens_thinking,
+        num_ignore=args.num_ignore,
     )
 
 

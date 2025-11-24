@@ -88,3 +88,6 @@ class RunConfig(BaseModel):
     shuffle: int = 0
     user_strategy: str = "llm"
     few_shot_displays_path: Optional[str] = None
+    vllm_base_url: str = "http://localhost:8005/v1"
+    max_tokens_thinking: int = 8000
+    num_ignore: int = 1

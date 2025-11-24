@@ -21,7 +21,7 @@ def run(config: RunConfig) -> List[EnvRunResult]:
     assert config.env in ["retail", "airline"], "Only retail and airline envs are supported"
     assert config.model_provider in provider_list, "Invalid model provider"
     assert config.user_model_provider in provider_list, "Invalid user model provider"
-    assert config.agent_strategy in ["tool-calling", "act", "react", "few-shot"], "Invalid agent strategy"
+    assert config.agent_strategy in ["tool-calling", "act", "react", "few-shot", "budget-forcing"], "Invalid agent strategy"
     assert config.task_split in ["train", "test", "dev"], "Invalid task split"
     assert config.user_strategy in [item.value for item in UserStrategy], "Invalid user strategy"
 
@@ -171,6 +171,20 @@ def agent_factory(
             model=config.model,
             provider=config.model_provider,
             few_shot_displays=few_shot_displays,
+            temperature=config.temperature,
+        )
+    elif config.agent_strategy == "budget-forcing":
+        # Budget forcing from S1 paper
+        from tau_bench.agents.chat_budget_agent import ChatBudgetForcingAgent
+
+        return ChatBudgetForcingAgent(
+            tools_info=tools_info,
+            wiki=wiki,
+            vllm_base_url=config.vllm_base_url,
+            model_name=config.model,
+            max_tokens_thinking=config.max_tokens_thinking,
+            num_ignore=config.num_ignore,
+            use_reasoning=True,  # Use ReAct format
             temperature=config.temperature,
         )
     else:
