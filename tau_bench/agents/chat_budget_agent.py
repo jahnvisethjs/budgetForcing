@@ -76,15 +76,12 @@ class ChatBudgetForcingAgent(Agent):
         Generate next step with budget forcing.
         
         Implements 3-phase generation (S1 style):
-        1. Initial thinking: Generate until model wants to stop (at "Action:")
-        2. Budget forcing: If stopped at "Action:", append "Wait" and continue
+        1. Initial thinking: Generate until model stops naturally or hits budget
+        2. Budget forcing: Append "Wait" to assistant message and continue
         3. Parse action from final output
         
-        Detection logic (matching S1's approach):
-        - S1: Model hits stop token `<|im_start|><|im_end|>` → add "Wait"
-        - TAU-Bench: Model outputs "Action:" → add "Wait"
-        
-        This forces the model to reconsider its tool choice before finalizing.
+        Unlike raw completions, we use chat API and detect early stopping by checking
+        if response is shorter than expected or doesn't contain "Action:".
         
         Args:
             messages: Conversation history
@@ -92,61 +89,53 @@ class ChatBudgetForcingAgent(Agent):
         Returns:
             (message_dict, action, cost) tuple
         """
-        # Convert messages to single prompt string for raw generation
-        prompt = ""
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "system":
-                prompt += content + "\n"
-            elif role == "user":
-                prompt += f"User: {content}\n"
-            elif role == "assistant":
-                prompt += f"Assistant: {content}\n"
-        
-        prompt += "Assistant: "  # Start assistant response
-        
         # PHASE 1: Initial thinking
-        # Stop when model outputs "Action:" (wants to take action)
-        # This is analogous to S1's stop token for end-of-thinking
-        response = self.client.completions.create(
+        response = self.client.chat.completions.create(
             model=self.model_name,
-            prompt=prompt,
+            messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens_thinking,
-            stop=["Action:"],  # Stop when model wants to act
         )
         
-        content = response.choices[0].text
+        content = response.choices[0].message.content
         tokens_used = response.usage.completion_tokens
         finish_reason = response.choices[0].finish_reason
         
         # PHASE 2: Budget forcing (S1 style)
-        # If model stopped at "Action:" (wants to act), force it to reconsider
-        # This matches S1's logic: when model hits stop token, add "Wait" if budget allows
+        # Check if model stopped early (before generating Action:)
+        # This indicates it wants more thinking or got interrupted
         remaining_budget = self.max_tokens_thinking - tokens_used
         
-        # Only force if model actually wanted to stop (not if it hit max_tokens)
-        if finish_reason == "stop" and remaining_budget > 10:
+        # Force reconsideration if:
+        # 1. Model finished but didn't generate "Action:" (stopped early)
+        # 2. OR model hit max_tokens without completing thought
+        # 3. AND we have budget remaining
+        should_force = (
+            ("Action:" not in content or finish_reason == "length")
+            and remaining_budget > 10
+        )
+        
+        if should_force:
             for i in range(self.num_ignore):
                 if remaining_budget <= 10:
                     break
                 
-                # S1 approach: append output + "Wait" to prompt, then continue
-                # Important: We append "Wait" BEFORE "Action:" to force reconsideration
-                prompt_with_wait = prompt + content + "Wait"
+                # S1 approach: append "Wait" to the assistant's message
+                # This forces model to reconsider its reasoning
+                messages_with_wait = messages + [
+                    {"role": "assistant", "content": content + "Wait"}
+                ]
                 
-                # Continue generation from extended prompt
-                response = self.client.completions.create(
+                # Continue generation
+                response = self.client.chat.completions.create(
                     model=self.model_name,
-                    prompt=prompt_with_wait,
+                    messages=messages_with_wait,
                     temperature=self.temperature,
                     max_tokens=remaining_budget,
-                    stop=["Action:"],  # Still stop at "Action:"
                 )
                 
                 # Append new content
-                new_content = response.choices[0].text
+                new_content = response.choices[0].message.content
                 content = content + "Wait" + new_content
                 
                 # Update budget tracking
@@ -154,28 +143,13 @@ class ChatBudgetForcingAgent(Agent):
                 remaining_budget = self.max_tokens_thinking - tokens_used
                 finish_reason = response.choices[0].finish_reason
                 
-                # If model hit max_tokens or no more budget, stop forcing
-                if finish_reason != "stop" or remaining_budget <= 10:
+                # Stop if we now have "Action:" or no budget
+                if "Action:" in content or remaining_budget <= 10:
                     break
         
         # PHASE 3: Parse action
-        # At this point, content should end right before "Action:"
-        # We need to let it complete the action
-        if not content.strip().endswith("Action:"):
-            # Complete the generation to get the full action
-            final_prompt = prompt + content + "Action:"
-            response = self.client.completions.create(
-                model=self.model_name,
-                prompt=final_prompt,
-                temperature=self.temperature,
-                max_tokens=500,  # Enough for action JSON
-            )
-            action_content = "Action:" + response.choices[0].text
-        else:
-            action_content = content
-        
-        # Extract action from content
-        action_str = action_content.split("Action:")[-1].strip()
+        # Extract action from content (same logic as ChatReActAgent)
+        action_str = content.split("Action:")[-1].strip()
         try:
             action_parsed = json.loads(action_str)
         except json.JSONDecodeError:
@@ -189,11 +163,10 @@ class ChatBudgetForcingAgent(Agent):
         assert "arguments" in action_parsed
         action = Action(name=action_parsed["name"], kwargs=action_parsed["arguments"])
         
-        # Create message dict with the full content (including final action)
-        full_content = content if content.strip().endswith("Action:") else content + "\n" + action_content
+        # Create message dict
         message = {
             "role": "assistant",
-            "content": full_content,
+            "content": content,
         }
         
         # Approximate cost (vLLM is free, but keep for compatibility)
