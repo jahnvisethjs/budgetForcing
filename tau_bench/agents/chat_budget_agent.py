@@ -75,13 +75,10 @@ class ChatBudgetForcingAgent(Agent):
         """
         Generate next step with budget forcing.
         
-        Implements 3-phase generation (S1 style):
-        1. Initial thinking: Generate until model stops naturally or hits budget
-        2. Budget forcing: Append "Wait" to assistant message and continue
+        Implements S1-style budget forcing:
+        1. Initial thinking: Generate with available token budget
+        2. Budget forcing: Append "Wait" and force continuation num_ignore times
         3. Parse action from final output
-        
-        Unlike raw completions, we use chat API and detect early stopping by checking
-        if response is shorter than expected or doesn't contain "Action:".
         
         Args:
             messages: Conversation history
@@ -89,12 +86,26 @@ class ChatBudgetForcingAgent(Agent):
         Returns:
             (message_dict, action, cost) tuple
         """
+        # Calculate available tokens to prevent context overflow
+        # Model max: 32768, reserve some for the response
+        model_max_context = 32768
+        
+        # Estimate input tokens (rough approximation: 1 token ≈ 4 chars)
+        input_text = ""
+        for msg in messages:
+            input_text += msg.get("content", "")
+        estimated_input_tokens = len(input_text) // 4
+        
+        # Calculate actual available tokens
+        available_tokens = model_max_context - estimated_input_tokens - 500  # Reserve 500 for safety
+        actual_max_tokens = min(self.max_tokens_thinking, max(100, available_tokens))
+        
         # PHASE 1: Initial thinking
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
             temperature=self.temperature,
-            max_tokens=self.max_tokens_thinking,
+            max_tokens=actual_max_tokens,
         )
         
         content = response.choices[0].message.content
@@ -104,7 +115,7 @@ class ChatBudgetForcingAgent(Agent):
         # PHASE 2: Budget forcing (S1 style)
         # S1 approach: Always force continuation num_ignore times
         # This gives model more thinking time before finalizing action
-        remaining_budget = self.max_tokens_thinking - tokens_used
+        remaining_budget = actual_max_tokens - tokens_used
         
         # Always force budget forcing if we have budget remaining
         # S1 doesn't try to detect "should we force" - it just forces num_ignore times
@@ -133,7 +144,7 @@ class ChatBudgetForcingAgent(Agent):
                 
                 # Update budget tracking
                 tokens_used += response.usage.completion_tokens
-                remaining_budget = self.max_tokens_thinking - tokens_used
+                remaining_budget = actual_max_tokens - tokens_used
                 finish_reason = response.choices[0].finish_reason
                 
                 # Stop if no more budget
