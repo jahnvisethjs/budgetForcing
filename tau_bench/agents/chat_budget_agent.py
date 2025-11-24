@@ -127,7 +127,7 @@ class ChatBudgetForcingAgent(Agent):
                 # S1 approach: append "Wait" to the assistant's message
                 # This forces model to reconsider its reasoning
                 messages_with_wait = messages + [
-                    {"role": "assistant", "content": content + "Wait"}
+                    {"role": "assistant", "content": content + "Wait,\n"}
                 ]
                 
                 # Continue generation
@@ -140,7 +140,7 @@ class ChatBudgetForcingAgent(Agent):
                 
                 # Append new content
                 new_content = response.choices[0].message.content
-                content = content + "Wait" + new_content
+                content = content + "Wait,\n" + new_content
                 
                 # Update budget tracking
                 tokens_used += response.usage.completion_tokens
