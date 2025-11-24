@@ -102,20 +102,13 @@ class ChatBudgetForcingAgent(Agent):
         finish_reason = response.choices[0].finish_reason
         
         # PHASE 2: Budget forcing (S1 style)
-        # Check if model stopped early (before generating Action:)
-        # This indicates it wants more thinking or got interrupted
+        # S1 approach: Always force continuation num_ignore times
+        # This gives model more thinking time before finalizing action
         remaining_budget = self.max_tokens_thinking - tokens_used
         
-        # Force reconsideration if:
-        # 1. Model finished but didn't generate "Action:" (stopped early)
-        # 2. OR model hit max_tokens without completing thought
-        # 3. AND we have budget remaining
-        should_force = (
-            ("Action:" not in content or finish_reason == "length")
-            and remaining_budget > 10
-        )
-        
-        if should_force:
+        # Always force budget forcing if we have budget remaining
+        # S1 doesn't try to detect "should we force" - it just forces num_ignore times
+        if remaining_budget > 10:
             for i in range(self.num_ignore):
                 if remaining_budget <= 10:
                     break
@@ -143,8 +136,8 @@ class ChatBudgetForcingAgent(Agent):
                 remaining_budget = self.max_tokens_thinking - tokens_used
                 finish_reason = response.choices[0].finish_reason
                 
-                # Stop if we now have "Action:" or no budget
-                if "Action:" in content or remaining_budget <= 10:
+                # Stop if no more budget
+                if remaining_budget <= 10:
                     break
         
         # PHASE 3: Parse action
