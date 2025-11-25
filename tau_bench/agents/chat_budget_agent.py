@@ -209,13 +209,22 @@ class ChatBudgetForcingAgent(Agent):
             action_parsed = json.loads(action_str)
         except json.JSONDecodeError:
             # Fallback: treat as respond action
+            print(f"[WARNING] Failed to parse action JSON, using respond fallback")
+            print(f"  Raw action string: {action_str[:200]}...")
             action_parsed = {
                 "name": RESPOND_ACTION_NAME,
                 "arguments": {RESPOND_ACTION_FIELD_NAME: action_str},
             }
         
-        assert "name" in action_parsed
-        assert "arguments" in action_parsed
+        # Validate and fix malformed action
+        if "name" not in action_parsed or "arguments" not in action_parsed:
+            print(f"[WARNING] Malformed action (missing 'name' or 'arguments'), using respond fallback")
+            print(f"  Parsed action: {action_parsed}")
+            action_parsed = {
+                "name": RESPOND_ACTION_NAME,
+                "arguments": {RESPOND_ACTION_FIELD_NAME: str(action_parsed)},
+            }
+        
         action = Action(name=action_parsed["name"], kwargs=action_parsed["arguments"])
         
         # Create message dict
