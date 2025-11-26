@@ -3,6 +3,7 @@
 import os
 import json
 import random
+import time
 import traceback
 from math import comb
 import multiprocessing
@@ -56,6 +57,11 @@ def run(config: RunConfig) -> List[EnvRunResult]:
             f"Running tasks {config.start_index} to {end_index} (checkpoint path: {ckpt_path})"
     )
     for i in range(config.num_trials):
+        # Add delay between trials to avoid rate limiting (especially for Anthropic API)
+        if i > 0:
+            print(f"\n⏳ Waiting 15 seconds before trial {i+1} to avoid rate limiting...")
+            time.sleep(15)
+        
         if config.task_ids and len(config.task_ids) > 0:
             idxs = config.task_ids
         else:
