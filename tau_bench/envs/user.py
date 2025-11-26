@@ -2,9 +2,42 @@
 
 import abc
 import enum
+import time
 from litellm import completion
+from litellm.exceptions import RateLimitError
 
 from typing import Optional, List, Dict, Any, Union
+
+
+def completion_with_retry(max_retries=5, **kwargs):
+    """
+    Wrapper for litellm.completion with exponential backoff retry logic.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        **kwargs: Arguments to pass to litellm.completion
+        
+    Returns:
+        Response from completion call
+        
+    Raises:
+        RateLimitError if max retries exceeded
+    """
+    for attempt in range(max_retries):
+        try:
+            return completion(**kwargs)
+        except RateLimitError as e:
+            if attempt == max_retries - 1:
+                # Last attempt failed, re-raise
+                raise
+            
+            # Calculate exponential backoff: 15, 30, 60, 120 seconds
+            wait_time = 15 * (2 ** attempt)
+            print(f"\n⚠️  Rate limit hit. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+            time.sleep(wait_time)
+    
+    # Should never reach here, but just in case
+    raise RateLimitError("Max retries exceeded")
 
 
 class BaseUserSimulationEnv(abc.ABC):
@@ -44,7 +77,7 @@ class LLMUserSimulationEnv(BaseUserSimulationEnv):
         self.reset()
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
+        res = completion_with_retry(
             model=self.model, custom_llm_provider=self.provider, messages=messages
         )
         message = res.choices[0].message
@@ -115,7 +148,7 @@ User Response:
 <the user response (this will be parsed and sent to the agent)>"""
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
+        res = completion_with_retry(
             model=self.model, custom_llm_provider=self.provider, messages=messages
         )
         message = res.choices[0].message
@@ -164,7 +197,7 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
         attempts = 0
         cur_message = None
         while attempts < self.max_attempts:
-            res = completion(
+            res = completion_with_retry(
                 model=self.model, custom_llm_provider=self.provider, messages=messages
             )
             cur_message = res.choices[0].message
@@ -224,7 +257,7 @@ Your answer will be parsed, so do not include any other text than the classifica
 -----
 
 Classification:"""
-    res = completion(
+    res = completion_with_retry(
         model=model,
         custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
@@ -258,7 +291,7 @@ Reflection:
 
 Response:
 <the response (this will be parsed and sent to the agent)>"""
-    res = completion(
+    res = completion_with_retry(
         model=model,
         custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
