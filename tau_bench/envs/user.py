@@ -21,32 +21,23 @@ def completion_with_retry(max_retries=5, **kwargs):
         Response from completion call
         
     Raises:
-        Exception if max retries exceeded
+        RateLimitError if max retries exceeded
     """
-    from litellm.exceptions import InternalServerError, ServiceUnavailableError
-    
-    # Errors that should trigger retry with backoff
-    retryable_errors = (RateLimitError, InternalServerError, ServiceUnavailableError)
-    
     for attempt in range(max_retries):
         try:
             return completion(**kwargs)
-        except retryable_errors as e:
+        except RateLimitError as e:
             if attempt == max_retries - 1:
                 # Last attempt failed, re-raise
                 raise
             
-            # Determine error type for message
-            error_type = type(e).__name__
-            
-            # Calculate exponential backoff: 15, 30, 60, 120, 240 seconds
+            # Calculate exponential backoff: 15, 30, 60, 120 seconds
             wait_time = 15 * (2 ** attempt)
-            print(f"\n⚠️  {error_type} encountered. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-            print(f"   Error: {str(e)[:200]}")
+            print(f"\n⚠️  Rate limit hit. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
             time.sleep(wait_time)
     
     # Should never reach here, but just in case
-    raise Exception("Max retries exceeded")
+    raise RateLimitError("Max retries exceeded")
 
 
 class BaseUserSimulationEnv(abc.ABC):
