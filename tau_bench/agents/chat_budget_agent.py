@@ -67,6 +67,34 @@ class ChatBudgetForcingAgent(Agent):
         self.max_tokens_thinking = max_tokens_thinking
         self.num_ignore = num_ignore
         
+        # Action-specific forcing: adjust num_ignore based on consequence level
+        self.action_consequence_levels = {
+            # CRITICAL: Irreversible database modifications (num_ignore=4)
+            "exchange_delivered_order_items": 4,  # Irreversible, charges money
+            "cancel_pending_order": 4,  # Irreversible refund
+            "modify_pending_order_items": 4,  # ONE-TIME ONLY action
+            
+            # HIGH: Database modifications, reversible (num_ignore=3)
+            "return_delivered_order_items": 3,  # Creates return shipment
+            "modify_pending_order_payment": 3,  # Affects billing
+            "modify_pending_order_address": 3,  # Wrong address risk
+            "modify_user_address": 3,  # Affects future orders
+            
+            # MEDIUM: Communication & error-prone queries (num_ignore=2)
+            "respond": 2,  # Miscommunication risk
+            "transfer_to_human_agents": 2,  # Last resort, should reconsider
+            "get_order_details": 2,  # Common format error (needs "#" prefix)
+            "get_product_details": 2,  # product_id vs item_id confusion
+            
+            # LOW: Safe queries (num_ignore=1)
+            "find_user_id_by_email": 1,  # Simple lookup
+            "find_user_id_by_name_zip": 1,  # Simple lookup
+            "get_user_details": 1,  # Read-only
+            "list_all_product_types": 1,  # No arguments
+            "calculate": 1,  # Simple math
+        }
+        self.default_num_ignore = 1  # Fallback for unknown actions
+        
         self.tools_info = tools_info
 
     def generate_next_step_with_budget_forcing(
@@ -120,29 +148,35 @@ class ChatBudgetForcingAgent(Agent):
         except:
             first_action_name = "unknown"
         
+        # Get adaptive num_ignore based on action consequence level
+        adaptive_num_ignore = self.action_consequence_levels.get(
+            first_action_name,
+            self.default_num_ignore
+        )
+        
         print(f"\n{'='*60}")
         print(f"[BUDGET FORCING] Phase 1 Complete")
         print(f"  Tokens used: {tokens_used}/{actual_max_tokens}")
         print(f"  First action: {first_action_name}")
+        print(f"  Adaptive num_ignore: {adaptive_num_ignore} (consequence-based)")
         print(f"{'='*60}")
         
         # PHASE 2: Budget forcing (S1 style)
-        # S1 approach: Always force continuation num_ignore times
-        # This gives model more thinking time before finalizing action
+        # NEW: Use adaptive num_ignore based on action consequence
+        # Critical actions get more forcing iterations
         remaining_budget = actual_max_tokens - tokens_used
         
         # Always force budget forcing if we have budget remaining
-        # S1 doesn't try to detect "should we force" - it just forces num_ignore times
         if remaining_budget > 10:
             print(f"\n[BUDGET FORCING] Phase 2: Forcing reconsideration")
             print(f"  Remaining budget: {remaining_budget} tokens")
-            print(f"  num_ignore iterations: {self.num_ignore}")
+            print(f"  Adaptive iterations: {adaptive_num_ignore}")
             
-            for i in range(self.num_ignore):
+            for i in range(adaptive_num_ignore):
                 if remaining_budget <= 10:
                     break
                 
-                print(f"\n  --- Forcing iteration {i+1}/{self.num_ignore} ---")
+                print(f"\n  --- Forcing iteration {i+1}/{adaptive_num_ignore} ---")
                 print(f"  Appending 'Wait,\\n' to prompt...")
                 
                 # S1 approach: append "Wait" to the assistant's message
@@ -189,8 +223,9 @@ class ChatBudgetForcingAgent(Agent):
             final_action_name = "unknown"
         
         # Compare and log result
-        if remaining_budget > 10 and self.num_ignore > 0:
+        if remaining_budget > 10 and adaptive_num_ignore > 0:
             print(f"\n[BUDGET FORCING] Phase 2 Complete")
+            print(f"  Iterations completed: {adaptive_num_ignore}")
             if first_action_name != final_action_name:
                 print(f"  ✅ ACTION CHANGED: {first_action_name} → {final_action_name}")
                 print(f"  🎯 Model reconsidered and changed its mind!")
